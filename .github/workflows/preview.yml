@@ -1,0 +1,59 @@
+# Plan morning-digest § 3 / § 4. Builds the review copy of /digest/<night> and puts it on
+# GitHub Pages. The HTML is never committed (ADR 0003): it is rendered here, in CI, from the
+# LANE_MARKER repo variable. Clean-up: delete the variable and run this workflow again, so the
+# same link serves the page with "no marker set".
+name: preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      night:
+        description: Night to preview (YYYY-MM-DD)
+        default: '2026-10-28'
+        required: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Save the page as one HTML file
+        env:
+          LANE_ID: lane-07
+          LANE_MARKER: ${{ vars.LANE_MARKER }}
+          PORT: 8787
+          NIGHT: ${{ inputs.night }}
+        run: |
+          pnpm start > rig.log 2>&1 &
+          for i in $(seq 1 30); do curl -fsS http://localhost:8787/health > /dev/null && break; sleep 1; done
+          mkdir -p _site
+          curl -fsS "http://localhost:8787/digest/$NIGHT" -o _site/index.html
+          # Check the banner is there without printing the marker into the public log.
+          grep -q 'class="marker"' _site/index.html
+          if grep -q 'no marker set' _site/index.html; then echo "banner: no marker set"; else echo "banner: marker set"; fi
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+          retention-days: 1
+      - id: deploy
+        uses: actions/deploy-pages@v4
